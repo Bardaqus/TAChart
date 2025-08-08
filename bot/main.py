@@ -5,15 +5,15 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# чтобы импортировались пакеты из корня проекта
+# чтобы работали импорты пакетов из корня (ta/, bot/)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from ta.fetch import fetch_ohlcv_df  # должна возвращать pandas.DataFrame
+from ta.fetch import fetch_ohlcv_df
 from ta.render import render_chart_with_lines
 
-# грузим .env из корня проекта
+# .env из корня
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = "8481502944:AAHBRxYn_hN92snDW36e9cRJssA38xKEoDg"
 
 def normalize_tf(tf: str) -> str:
     tf = (tf or "").strip().lower()
@@ -28,33 +28,30 @@ def normalize_tf(tf: str) -> str:
     return mapping.get(tf, "15m")
 
 def parse_kv(args):
-    """Парсим tol=, anchors=, span=, zz= из аргументов."""
     out = {}
     for a in args:
         if "=" in a:
             k, v = a.split("=", 1)
-            k = k.strip().lower()
-            v = v.strip()
-            out[k] = v
+            out[k.strip().lower()] = v.strip()
     return out
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Готов ✅\n"
-        "Команда: /chart [SYMBOL] [TF] [BARS] [LINES] [tol=] [anchors=] [span=] [zz=]\n"
-        "Пример: /chart BTC/USDT 15m 800 7 tol=0.02 anchors=2 span=10 zz=0.008"
+        "Формат: /chart SYMBOL TF BARS LINES [tol=] [anchors=] [span=] [zz=]\n"
+        "Напр.: /chart BTC/USDT 15m 800 7 tol=0.02 anchors=2 span=10 zz=0.008"
     )
 
 async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # дефолты
+    # мягкие дефолты, чтобы линии находились чаще
     symbol = "BTC/USDT"
     timeframe = "15m"
-    limit = 300
-    max_lines = 5
-    tol = 0.01
-    anchors = 3
-    span = 20
-    zz = 0.012
+    limit = 500
+    max_lines = 7
+    tol = 0.02        # 2%
+    anchors = 2
+    span = 10
+    zz = 0.008        # 0.8%
 
     # позиционные
     if len(context.args) >= 1: symbol = context.args[0]
@@ -69,7 +66,7 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ключ=значение
     kv = parse_kv(context.args[4:])
     if "tol" in kv:
-        try: tol = float(kv["tol"])
+        try: tol = float(kv["tol"]); 
         except: pass
     if "anchors" in kv:
         try: anchors = int(kv["anchors"])
@@ -82,11 +79,11 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
 
     await update.message.reply_text(
-        f"⏳ Генерирую: {symbol} {timeframe} | bars={limit} | lines={max_lines}\n"
+        f"⏳ {symbol} {timeframe} | bars={limit} | lines={max_lines}\n"
         f"Параметры: tol={tol}, anchors={anchors}, span={span}, zz={zz}"
     )
 
-    # загрузка данных
+    # загрузка
     try:
         df = await fetch_ohlcv_df(symbol, timeframe, limit)
         if not isinstance(df, pd.DataFrame) or df.empty:
@@ -106,17 +103,18 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             min_span=span,
             zz_dev=zz
         )
-        # текстовая сводка
         summary = (
-            f"Найдено линий: {info.get('total', 0)}\n"
-            f"resistance: {info.get('resistance', 0)}, support: {info.get('support', 0)}\n"
-            f"channels: {info.get('channel_upper', 0) + info.get('channel_lower', 0)}, "
-            f"triangles: {info.get('triangle_upper', 0) + info.get('triangle_lower', 0)}, "
-            f"target: {info.get('target', 0)}"
+            f"Найдено линий: {info.get('total',0)}"
+            f" | res: {info.get('resistance',0)}"
+            f" | sup: {info.get('support',0)}"
+            f" | ch: {info.get('channel_upper',0)+info.get('channel_lower',0)}"
+            f" | tri: {info.get('triangle_upper',0)+info.get('triangle_lower',0)}"
+            f" | target: {info.get('target',0)}"
         )
+        if info.get("fallback_used"):
+            summary += "  (использован авто-фолбэк параметров)"
         await update.message.reply_text(summary)
 
-        # отправка картинки
         out = "chart.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         await update.message.reply_photo(photo=open(out, "rb"),
@@ -126,7 +124,7 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN or ":" not in BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не задан или некорректен (см. .env).")
+        raise RuntimeError("BOT_TOKEN не задан или неверный (.env в корне).")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("chart", chart))
